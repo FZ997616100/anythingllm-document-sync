@@ -1,0 +1,4 @@
+# Optional PDF preprocessing; Tesseract and chi_sim/eng language data are local prerequisites.
+pypdf>=6,<7
+pypdfium2>=5,<6
+Pillow>=11,<13

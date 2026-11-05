@@ -1,21 +1,33 @@
-name: Unit tests
+name: Sync and PDF tests
 
 on: [push, pull_request]
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: '3.12'
+          - os: windows-latest
+            python: '3.13'
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12.7"
+          python-version: ${{ matrix.python }}
 
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install -r requirements.txt -r requirements-pdf.txt
 
-      - name: Run unit tests
-        run: pytest tests/test_unit.py -v
+      - name: Install OCR for synthetic PDF tests (Linux runner only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-chi-sim fonts-noto-cjk
+
+      - name: Run tests (live AnythingLLM is opt-in)
+        run: python -m pytest tests -v -ra

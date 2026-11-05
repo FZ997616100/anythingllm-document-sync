@@ -1,107 +1,95 @@
 # AnythingLLM Document Sync
 
-A Python utility for syncing local documents into an AnythingLLM workspace.
-It scans configured directories, uploads new or modified files, embeds them into
-the workspace, and removes documents that have been deleted locally.
+A fork of [dastra/anythingllm-document-sync](https://github.com/dastra/anythingllm-document-sync)
+with Windows polling, XLSX/PPTX support and optional local PDF OCR.
+[中文说明与验收边界](docs/README.zh-CN.md).
 
-## Features
+## Changes
 
-- **Automatic document discovery**: Recursively scans directories for supported document types
-- **Smart sync**: Only uploads new or modified documents; skips unchanged ones
-- **Document tracking**: Maintains a local SQLite database to track uploaded files
-- **Cleanup**: Unembeds and removes documents from AnythingLLM when deleted locally
-- **Configurable**: Supports file and directory exclusions
+- Recursively scan all configured source directories; extensions are case-insensitive.
+- Track every returned document (including every nonempty XLSX worksheet).
+- Hash file content; retry incomplete uploads/embeddings/cleanup.
+- Confirm the complete new generation in the workspace before removing the old one.
+- Only delete objects recorded by this tool, leaving manual uploads alone.
+- Missing roots or directory traversal errors suppress deletion.
+- Removed/excluded roots are left alone; renames are new uploads plus old-path cleanup.
+- Optional PDF preprocessing extracts text per page or OCRs entire rendered pages.
+- Changes to PDF extraction settings automatically trigger reprocessing.
 
-## Supported file types
+This is a companion to AnythingLLM, not an installer or a replacement UI.
 
-`txt`, `md`, `org`, `adoc`, `rst`, `html`, `docx`, `odt`, `odp`, `pdf`, `mbox`, `epub`
+## Setup
 
-## Requirements
+Requires Python 3.12/3.13 and a running AnythingLLM Desktop/server.
+SQLite is included with Python; pyenv is not required.
 
-- Python 3.12.7
-- AnythingLLM Desktop (or server) running locally at `http://localhost:3001`
-- `pyenv` and `sqlite` (macOS: `brew install pyenv sqlite`)
-
-## Installation
-
-```shell
-pyenv install 3.12.7
-pyenv local 3.12.7
-pyenv exec python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+Copy-Item -LiteralPath config.example.yaml -Destination config.local.yaml
 ```
 
-## Configuration
+Fill in a local developer API key, workspace slug and source roots.
+Use `http://127.0.0.1:3001` for a same-machine Desktop installation.
+See [config.example.yaml](config.example.yaml). Never commit a real key.
+Relative source paths resolve against the YAML directory.
+Exclusions retain the upstream substring matching semantics.
 
-Create `~/.anythingllm-sync/config.yaml`:
-
-```yaml
-api-key: YOUR-API-KEY
-workspace-slug: your-workspace
-anythingllm-url: http://localhost:3001  # optional, defaults to http://localhost:3001
-file-paths:
-  - /Users/username/Documents/
-directory-excludes:
-  - .obsidian
-file-excludes:
-  - .DS_Store
+```powershell
+.\.venv\Scripts\python.exe ingest_anythingllm_docs.py --config config.local.yaml --state sync.db
+.\.venv\Scripts\python.exe ingest_anythingllm_docs.py --config config.local.yaml --state sync.db --watch --interval 60
 ```
 
-**API key**: AnythingLLM Desktop → spanner icon (bottom right) → Developer API → Generate New API Key
+Both AnythingLLM and the sync process must keep running. Polling waits after
+each cycle; uploads/OCR can take longer than the interval. It catches up after
+restart. No startup task or service is installed automatically.
 
-**Workspace slug**: Click workspace → settings cog → Vector Database tab → Vector database identifier
+Keep the state database outside source roots. Back up an existing state database
+before upgrading. Old rows are retained and migrated; because the original schema
+did not store the target, keep the same server/workspace on the first upgraded run.
 
-**AnythingLLM URL**: Set `anythingllm-url` if your instance is not at `http://localhost:3001` — e.g. a Docker container on a custom port: `http://localhost:8080`
+## Formats and PDF OCR
 
-## Usage
+Supported: `txt md org adoc rst html docx xlsx pptx odt odp pdf mbox epub`.
+Office text extraction still runs in AnythingLLM. Legacy `.doc/.xls/.ppt/.wps`,
+spreadsheet recalculation and OCR of images inside Office documents are not
+implemented by this tool.
 
-```shell
-python ingest_anythingllm_docs.py
+PDF preprocessing is opt-in. Install `requirements-pdf.txt`; OCR additionally
+needs a local Tesseract executable and `chi_sim+eng` language data.
+Python packages do not install the engine or download languages automatically.
+
+- `pdf.mode: 'off'`: AnythingLLM's built-in PDF processing.
+- `pdf.mode: auto`: retain sufficient page text; OCR each low-text page.
+- `pdf.mode: force`: OCR every complete page, including text/image hybrid pages.
+
+The original PDF stays read-only. Output contains filename and page numbers.
+Only verified all-white pages without text are marked blank. An OCR failure or
+empty result on a nonblank page fails the file, retaining the old indexed version.
+OCR is approximate text extraction, not table, formula or diagram understanding.
+See the Chinese guide for limitations and source references.
+
+## Ownership and limitations
+
+Deletion removes this tool's uploaded objects from the global AnythingLLM library
+and every workspace reusing those objects. Prefer a dedicated sync workspace.
+Do not manually reuse a synced object if it must outlive deletion of its source.
+
+A lost upload response can leave an untracked server object because its IDs were
+never received. The tool does not sweep unrelated workspace files to recover it.
+This fork's tests do not replace acceptance against an installed Desktop version.
+
+## Tests
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-pdf.txt
+.\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-Each run:
-1. Scans `file-paths` for supported documents (respecting exclusions)
-2. Uploads new or modified documents to AnythingLLM
-3. Embeds uploaded-but-not-yet-embedded documents into the workspace
-4. Unembeds documents no longer present locally
-5. Removes unembedded documents from AnythingLLM's document store
-6. Cleans up the local tracking database
+Tests use real local files, SQLite and PDF parsing/rendering with simulated API
+responses. Real OCR tests run when Tesseract, both languages and a CJK font are
+available; otherwise they skip. CI installs OCR on its Linux runner and uses only
+synthetic documents. Live AnythingLLM tests require explicit opt-in and a disposable
+test workspace; see `tests/test_integration.py`.
 
-Document upload state is tracked in `~/.anythingllm-sync/uploaded-docs.db` (SQLite).
-
-## Running the tests
-
-**Unit tests** (no AnythingLLM instance required — all API calls are mocked):
-
-```shell
-pytest tests/test_unit.py -v
-```
-
-**Integration tests** (requires AnythingLLM running and a valid `~/.anythingllm-sync/config.yaml`):
-
-```shell
-pytest tests/test_integration.py -v
-```
-
-Run all tests:
-
-```shell
-pytest tests/ -v
-```
-
-## Project structure
-
-```
-ingest_anythingllm_docs.py   Main script — orchestrates the sync cycle
-anythingllm_loader/
-  anythingllm_api.py         AnythingLLM REST API client
-  config.py                  Config file loader (~/.anythingllm-sync/config.yaml)
-  database.py                SQLite wrapper (~/.anythingllm-sync/uploaded-docs.db)
-tests/
-  test_unit.py               Unit tests (mocked API, no live instance needed)
-  test_integration.py        Integration tests (requires live AnythingLLM)
-docs/
-  openapi.json               AnythingLLM OpenAPI specification
-```
+MIT license, with the upstream copyright preserved.

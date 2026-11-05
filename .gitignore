@@ -178,3 +178,13 @@ cython_debug/
 
 AGENTS.md
 TODO.txt
+
+# Local connection details, source text and sync state
+config.local.yaml
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.db.lock
+work/
+outputs/

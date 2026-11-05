@@ -1,0 +1,23 @@
+# Copy outside the repository or to config.local.yaml. Never commit a real key.
+api-key: REPLACE_WITH_LOCAL_ANYTHINGLLM_API_KEY
+workspace-slug: local-knowledge
+anythingllm-url: http://127.0.0.1:3001
+file-paths:
+  - 'C:/Knowledge'
+directory-excludes:
+  - .git
+file-excludes:
+  - '~$'
+  - .DS_Store
+
+# Optional PDF repair; 'off' preserves AnythingLLM's built-in PDF processing.
+# auto: OCR each page with insufficient text. force: OCR every complete page.
+# Requires requirements-pdf.txt plus a local Tesseract installation/language data.
+pdf:
+  mode: 'off'
+  languages: chi_sim+eng
+  dpi: 300
+  min_text_chars: 30
+  timeout: 120
+  tesseract_cmd: tesseract
+  # tessdata_dir: 'C:/Program Files/Tesseract-OCR/tessdata'
