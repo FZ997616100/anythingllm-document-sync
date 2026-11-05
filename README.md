@@ -55,12 +55,11 @@ Office text extraction still runs in AnythingLLM. Legacy `.doc/.xls/.ppt/.wps`,
 spreadsheet recalculation and OCR of images inside Office documents are not
 implemented by this tool.
 
-PDF preprocessing is opt-in. Install `requirements-pdf.txt`; OCR additionally
-needs a local Tesseract executable and `chi_sim+eng` language data.
-Python packages do not install the engine or download languages automatically.
-For Chinese documents, prefer the official [tessdata_best](https://github.com/tesseract-ocr/tessdata_best)
-models and set `pdf.tessdata_dir` to their local directory. CI uses this higher-accuracy
-configuration; distribution-provided fast models can misrecognize even clean scans.
+PDF preprocessing is opt-in. Install `requirements-pdf.txt`, which includes
+RapidOCR 3.9.2, CPU ONNX Runtime and the package's bundled Chinese/English models.
+No separate OCR application or language-pack installation is needed. Models are
+loaded from explicit local paths; missing models fail instead of downloading at
+inference time. `pdf.model_dir` can select an existing local model directory.
 
 - `pdf.mode: 'off'`: AnythingLLM's built-in PDF processing.
 - `pdf.mode: auto`: retain sufficient page text; OCR each low-text page.
@@ -90,9 +89,9 @@ This fork's tests do not replace acceptance against an installed Desktop version
 ```
 
 Tests use real local files, SQLite and PDF parsing/rendering with simulated API
-responses. Real OCR tests run when Tesseract, both languages and a CJK font are
-available; otherwise they skip. CI installs OCR on its Linux runner and uses only
-synthetic documents. Live AnythingLLM tests require explicit opt-in and a disposable
+responses. Real OCR tests run with the optional PDF dependencies and a CJK font;
+otherwise they skip. CI uses identical synthetic Chinese/English PDFs on Windows
+and Linux, with network access blocked during OCR. Live AnythingLLM tests require explicit opt-in and a disposable
 test workspace; see `tests/test_integration.py`.
 
 MIT license, with the upstream copyright preserved.

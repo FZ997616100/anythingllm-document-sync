@@ -35,13 +35,10 @@
 官方核心 v1.19.0 只在整本没有可提取文字时进入 OCR，混合文字页和扫描页可能漏页；
 页内图片提取也不能等同于完整页面渲染。本修复在同步端逐页处理，再通过官方 raw-text 接口入库，原 PDF 只读。
 
-使用免费本地组件：pypdf 提取文字、PDFium 渲染整页、Tesseract 识别文字。
-安装可选 requirements-pdf.txt 后，OCR 还需要本地 Tesseract 及 chi_sim、eng 语言包；
-本工具不会自动下载或安装它们。配置中的 tesseract_cmd 指向引擎，
-tessdata_dir 可指定本地语言包目录。
-中文资料建议使用官方 [tessdata_best](https://github.com/tesseract-ocr/tessdata_best) 中的 chi_sim、eng
-高精度模型，下载到本地后用 tessdata_dir 指定目录。系统自带的快速模型在干净测试页中也曾识别错字。
-CI 使用固定版本的官方高精度模型，实际资料仍需抽样核验文字准确性。
+使用免费本地组件：pypdf 提取文字、PDFium 渲染整页、RapidOCR 的 PaddleOCR 模型通过 CPU ONNX Runtime 识别文字。
+可选 requirements-pdf.txt 包含 RapidOCR 3.9.2 及随包内置的中英文模型，无需再安装系统 OCR 软件或语言包。
+初始化前检查模型文件并显式指定本地路径，缺模型时报告错误，不在识别过程中自动下载。
+model_dir 可指定已存在的本地模型目录，不填则使用 Python 包内的模型。
 
 | 模式 | 行为 |
 | --- | --- |
@@ -50,10 +47,10 @@ CI 使用固定版本的官方高精度模型，实际资料仍需抽样核验�
 | `mode: force` | 每页完整渲染再 OCR；适合同一页同时有长文字层和含字图片，或文字层有误。 |
 
 auto 无法发现已有长文字层中额外图片里的字，这类资料使用 force。
-改变识别模式、语言或清晰度等 PDF 提取配置时，即使原文件没有修改也会重新处理。
+改变识别模式、模型目录或清晰度等 PDF 提取配置时，即使原文件没有修改也会重新处理。
 force 更慢，原生文字精度也可能降低。输出保留文件名、页码和提取方式。
 只有无文字且整页渲染严格全白时才标记空白页。
-缺语言、超时、OCR失败或非空白页识别为空时整份文档报错，保留旧索引，不用部分结果覆盖。
+缺模型、OCR失败或非空白页识别为空时整份文档报错，保留旧索引，不用部分结果覆盖。
 加密 PDF 需要先提供有权解密的副本。OCR不能保证复杂表格结构、公式或电路图语义正确。
 
 旧 .doc/.xls/.ppt/.wps 格式转换尚未实现。
@@ -64,12 +61,12 @@ Office 正文解析仍由 AnythingLLM 完成；图片文字、SmartArt 和公式
 服务器地址使用 `http://127.0.0.1:3001`。
 AnythingLLM 的问答模型、嵌入模型都应配置本机 Ollama，向量库存本地，
 关闭不需要的联网工具和使用统计。同步器不会替你修改主软件配置。
-源码、软件、模型、语言包首次下载需要联网，日常处理可以在本机完成。
+源码、软件和模型首次下载需要联网，日常处理可以在本机完成。
 
 ## 验证边界
 
 测试使用真实目录、SQLite、PDF解析渲染以及模拟接口响应。
-GitHub CI 的 OCR 测试只使用代码生成的中文、英文、多图和空白页，无任何个人或单位资料。
+GitHub CI 在 Windows、Linux 使用相同的代码生成中文、英文、多图和空白页，识别时阻断网络，无任何个人或单位资料。
 真实 AnythingLLM 测试默认关闭，需要显式指定一次性测试工作区。
 主软件安装后仍需用测试副本检验 Office 提取、检索命中、新旧版本切换、删除和重启补同步。
 
@@ -83,4 +80,4 @@ GitHub CI 的 OCR 测试只使用代码生成的中文、英文、多图和空�
 - [上传与raw-text接口](https://github.com/Mintplex-Labs/anything-llm/blob/v1.19.0/server/endpoints/api/document/index.js)
 - [pypdf文字提取](https://pypdf.readthedocs.io/en/stable/user/extract-text.html)，BSD-3-Clause
 - [pypdfium2](https://github.com/pypdfium2-team/pypdfium2)，Apache-2.0/BSD-3-Clause，含另列的PDFium及第三方许可证
-- [Tesseract](https://github.com/tesseract-ocr/tesseract)，Apache-2.0
+- [RapidOCR](https://github.com/RapidAI/RapidOCR)，Apache-2.0；[v3.9.2 官方模型仓库](https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/README.md)也声明 Apache-2.0

@@ -7,11 +7,11 @@ from anythingllm_loader.config import AnythingLLMConfig
 
 def test_utf8_bom_and_relative_chinese_paths(tmp_path):
     path = tmp_path / "config.yaml"
-    path.write_text("api-key: test-key\nworkspace-slug: test\nfile-paths: ['资料']\npdf: {mode: auto, languages: chi_sim+eng}\n", encoding="utf-8-sig")
+    path.write_text("api-key: test-key\nworkspace-slug: test\nfile-paths: ['资料']\npdf: {mode: auto, model_dir: models}\n", encoding="utf-8-sig")
     config = AnythingLLMConfig.load_config(path)
     assert Path(config.file_paths[0]) == tmp_path / "资料"
     assert config.directory_excludes == []
-    assert config.pdf["languages"] == "chi_sim+eng"
+    assert Path(config.pdf["model_dir"]) == tmp_path / "models"
     assert config.anythingllm_url == "http://localhost:3001"
 
 

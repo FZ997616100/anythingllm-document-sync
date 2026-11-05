@@ -6,7 +6,7 @@ A page with sufficient text plus scanned text in images requires ``force``:
 ``auto`` cannot detect missing image text. ``force`` OCRs every complete page.
 OCR is a text approximation, not a table/layout/circuit interpretation engine.
 The original PDF is opened read-only. Nothing is downloaded or sent to a cloud.
-An unreadable page, missing language, or OCR failure aborts the document;
+An unreadable page, missing local model, or OCR failure aborts the document;
 callers must retain the previous index on failure. A page with no text layer
 and an entirely white full-page rendering is explicitly marked blank. Any
 other page returning empty OCR requires review, never a guess that it is blank.
@@ -14,7 +14,6 @@ PDFium rendering must not run concurrently in multiple threads.
 """
 
 from pathlib import Path
-import subprocess
 import tempfile
 
 
@@ -28,18 +27,14 @@ def extract_pdf_text(
     mode="auto",
     min_text_chars=30,
     dpi=300,
-    tesseract_cmd="tesseract",
-    languages="chi_sim+eng",
-    tessdata_dir=None,
-    timeout=120,
+    model_dir=None,
 ):
     """Return text with filename, 1-based page number, and extraction method.
 
-    Install requirements-pdf.txt separately. OCR additionally needs a locally
-    installed Tesseract CLI and every requested language's .traineddata file.
-    ``tesseract_cmd`` is one executable path, not a shell command; optional
-    ``tessdata_dir`` points directly at the directory holding .traineddata.
-    ``timeout`` is the maximum seconds for each Tesseract invocation.
+    Install requirements-pdf.txt separately. RapidOCR's pinned wheel includes
+    the CPU Chinese/English models. ``model_dir`` optionally selects a local
+    directory containing those same three model filenames. Missing files or
+    an absent embedded character dictionary fail instead of downloading.
     """
     if mode not in {"auto", "force"}:
         raise ValueError("PDF mode must be 'auto' or 'force'")
@@ -47,10 +42,6 @@ def extract_pdf_text(
         raise ValueError("min_text_chars must be a positive integer")
     if not isinstance(dpi, int) or dpi < 1:
         raise ValueError("dpi must be a positive integer")
-    if not isinstance(timeout, (int, float)) or not 0 < timeout < float("inf"):
-        raise ValueError("timeout must be a positive finite number")
-    if not isinstance(languages, str) or not all(languages.split("+")):
-        raise ValueError("languages must contain language codes joined by '+'")
 
     source = Path(path)
     try:
@@ -60,7 +51,7 @@ def extract_pdf_text(
 
     pages = []
     renderer = None
-    ocr_ready = False
+    engine = None
     current_page = 0
     try:
         with source.open("rb") as stream, tempfile.TemporaryDirectory(prefix="anythingllm-pdf-") as temporary:
@@ -103,14 +94,10 @@ def extract_pdf_text(
                         pages.append(f"Source: {source.name} | Page: {current_page} | Method: blank\n"
                                      "[Blank page: no text layer and entirely white rendering]")
                         continue
-                    if not ocr_ready:
-                        _check_languages(tesseract_cmd, languages, tessdata_dir, timeout)
-                        ocr_ready = True
-                    command = [str(tesseract_cmd), str(image_path), "stdout", "-l", languages,
-                               "--dpi", str(dpi), "--psm", "3"]
-                    if tessdata_dir is not None:
-                        command.extend(["--tessdata-dir", str(tessdata_dir)])
-                    text = _run_tesseract(command, timeout).strip()
+                    if engine is None:
+                        engine = _create_ocr_engine(model_dir)
+                    result = engine(str(image_path))
+                    text = "\n".join(result.txts or []).strip()
                     method = "OCR"
                     if not text:
                         raise PdfExtractionError("OCR returned no text; review this page before indexing")
@@ -125,24 +112,37 @@ def extract_pdf_text(
     return "\n\n".join(pages)
 
 
-def _run_tesseract(command, timeout):
+def _create_ocr_engine(model_dir):
     try:
-        result = subprocess.run(command, capture_output=True, encoding="utf-8", errors="replace",
-                                timeout=timeout, check=True)
-    except FileNotFoundError as exc:
-        raise PdfExtractionError("Tesseract executable not found; configure a local tesseract_cmd") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise PdfExtractionError("Tesseract timed out") from exc
-    except subprocess.CalledProcessError as exc:
-        raise PdfExtractionError(f"Tesseract failed with exit code {exc.returncode}: {exc.stderr or ''}") from exc
-    return result.stdout
+        import onnxruntime
+        import rapidocr
+    except ImportError as exc:
+        raise PdfExtractionError("Install optional requirements-pdf.txt for local RapidOCR") from exc
 
+    directory = Path(model_dir) if model_dir is not None else Path(rapidocr.__file__).parent / "models"
+    names = {"Det": "PP-OCRv6_det_small.onnx",
+             "Cls": "ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+             "Rec": "PP-OCRv6_rec_small.onnx"}
+    paths = {kind: directory / name for kind, name in names.items()}
+    for path in paths.values():
+        if not path.is_file():
+            raise PdfExtractionError(f"Missing local OCR model: {path}; automatic downloads are disabled")
 
-def _check_languages(tesseract_cmd, languages, tessdata_dir, timeout):
-    command = [str(tesseract_cmd), "--list-langs"]
-    if tessdata_dir is not None:
-        command.extend(["--tessdata-dir", str(tessdata_dir)])
-    available = set(_run_tesseract(command, timeout).splitlines())
-    missing = set(languages.split("+")) - available
-    if missing:
-        raise PdfExtractionError("Missing local Tesseract language data: " + ", ".join(sorted(missing)))
+    onnxruntime.disable_telemetry_events()
+    options = onnxruntime.SessionOptions()
+    options.intra_op_num_threads = 2
+    options.inter_op_num_threads = 1
+    # RapidOCR otherwise downloads a character dictionary for a custom ONNX
+    # model lacking metadata. Reject that case before its initializer runs.
+    session = onnxruntime.InferenceSession(str(paths["Rec"]), sess_options=options,
+                                           providers=["CPUExecutionProvider"])
+    if not session.get_modelmeta().custom_metadata_map.get("character", "").strip():
+        raise PdfExtractionError("Local OCR recognition model has no embedded character dictionary; automatic downloads are disabled")
+    del session
+
+    params = {f"{kind}.model_path": str(path) for kind, path in paths.items()}
+    params.update({"EngineConfig.onnxruntime.use_cuda": False,
+                   "EngineConfig.onnxruntime.use_dml": False,
+                   "EngineConfig.onnxruntime.intra_op_num_threads": 2,
+                   "EngineConfig.onnxruntime.inter_op_num_threads": 1})
+    return rapidocr.RapidOCR(params=params)

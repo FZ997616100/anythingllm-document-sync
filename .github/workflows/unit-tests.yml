@@ -24,19 +24,17 @@ jobs:
         run: |
           python -m pip install -r requirements.txt -r requirements-pdf.txt
 
-      - name: Install OCR for synthetic PDF tests (Linux runner only)
-        if: runner.os == 'Linux'
+      - name: Fetch public CJK font for identical synthetic tests on both systems
+        shell: python
         run: |
-          sudo apt-get update
-          sudo apt-get install -y tesseract-ocr tesseract-ocr-chi-sim fonts-noto-cjk
-
-      - name: Fetch official high-accuracy OCR models (synthetic tests only)
-        if: runner.os == 'Linux'
-        run: |
-          mkdir -p "$RUNNER_TEMP/tessdata-best"
-          curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/e12c65a915945e4c28e237a9b52bc4a8f39a0cec/chi_sim.traineddata -o "$RUNNER_TEMP/tessdata-best/chi_sim.traineddata"
-          curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/e12c65a915945e4c28e237a9b52bc4a8f39a0cec/eng.traineddata -o "$RUNNER_TEMP/tessdata-best/eng.traineddata"
-          echo "TESSDATA_DIR=$RUNNER_TEMP/tessdata-best" >> "$GITHUB_ENV"
+          import os
+          from pathlib import Path
+          from urllib.request import urlretrieve
+          font = Path(os.environ['RUNNER_TEMP']) / 'NotoSansCJK-Regular.ttc'
+          urlretrieve('https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTC/NotoSansCJK-Regular.ttc', font)
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
+              env.write(f'PDF_OCR_TEST_FONT={font}\n')
+              env.write('PDF_OCR_TEST_FONT_INDEX=2\n')
 
       - name: Run tests (live AnythingLLM is opt-in)
         run: python -m pytest tests -v -ra

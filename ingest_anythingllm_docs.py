@@ -64,8 +64,9 @@ def _fingerprint(path, pdf_options=None):
     if Path(path).suffix.lower() == ".pdf":
         options = {"mode": "off", **(pdf_options or {})}
         if options["mode"] != "off":
-            options = {"min_text_chars": 30, "dpi": 300, "tesseract_cmd": "tesseract",
-                       "languages": "chi_sim+eng", "tessdata_dir": None, "timeout": 120, **options}
+            options = {"min_text_chars": 30, "dpi": 300, "model_dir": None, **options}
+            # Engine changes must also replace previously extracted PDF text.
+            digest.update(b"rapidocr-3.9.2\x00")
         else:
             options = {"mode": "off"}
         # Changing extraction settings changes the processed content even with identical source bytes.

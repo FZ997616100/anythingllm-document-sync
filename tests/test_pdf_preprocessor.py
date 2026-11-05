@@ -1,11 +1,11 @@
-"""Real synthetic PDF parsing/rendering; OCR subprocess is deliberately a stub.
+"""Real synthetic PDF parsing/rendering; OCR inference is deliberately a stub.
 
 These tests do not claim to verify recognition accuracy of a local OCR engine.
 """
 
 import hashlib
 from pathlib import Path
-import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -19,6 +19,7 @@ from pypdf.generic import (DecodedStreamObject, DictionaryObject,
                            NameObject, NumberObject)
 
 from anythingllm_loader.pdf_preprocessor import PdfExtractionError, extract_pdf_text
+from anythingllm_loader import pdf_preprocessor
 
 
 def make_pdf(path, pages):
@@ -58,17 +59,12 @@ def make_pdf(path, pages):
 def ocr_stub(monkeypatch):
     calls = []
 
-    def run(command, **kwargs):
-        assert kwargs["check"] is True
-        assert kwargs["encoding"] == "utf-8"
-        assert kwargs["timeout"] == 120
-        if "--list-langs" in command:
-            return subprocess.CompletedProcess(command, 0, "List of available languages (2):\nchi_sim\neng\n", "")
-        with Image.open(command[1]) as image:
-            calls.append((command, image.copy()))
-        return subprocess.CompletedProcess(command, 0, "扫描文字 scanned text\n", "")
+    def infer(image_path):
+        with Image.open(image_path) as image:
+            calls.append((image_path, image.copy()))
+        return SimpleNamespace(txts=["扫描文字 scanned text"])
 
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(pdf_preprocessor, "_create_ocr_engine", lambda model_dir: infer)
     yield calls
     for _, image in calls:
         image.close()
@@ -79,7 +75,7 @@ def test_text_page_keeps_text_without_ocr_or_engine(tmp_path, monkeypatch):
     text = "This text page contains more than thirty nonspace characters."
     make_pdf(source, [(text, [])])
     before = hashlib.sha256(source.read_bytes()).hexdigest()
-    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: pytest.fail("Text page must not invoke OCR"))
+    monkeypatch.setattr(pdf_preprocessor, "_create_ocr_engine", lambda *a: pytest.fail("Text page must not invoke OCR"))
     result = extract_pdf_text(source)
     assert f"Source: {source.name} | Page: 1 | Method: text" in result
     assert text in result
@@ -90,19 +86,15 @@ def test_mixed_pdf_ocr_only_scanned_page_and_render_all_images(tmp_path, ocr_stu
     source = tmp_path / "mixed.pdf"
     make_pdf(source, [("Sufficient digital text for the first non-scanned page.", []),
                       ("", [(10, 20, (255, 0, 0)), (120, 190, (0, 0, 255))])])
-    result = extract_pdf_text(source, dpi=72, tesseract_cmd="C:/Local OCR/tesseract.exe",
-                              tessdata_dir="C:/Local OCR/tessdata")
+    result = extract_pdf_text(source, dpi=72)
     assert "Page: 1 | Method: text" in result
     assert "Page: 2 | Method: OCR\n扫描文字 scanned text" in result
     assert len(ocr_stub) == 1
-    command, image = ocr_stub[0]
+    image_path, image = ocr_stub[0]
     assert image.size == (200, 300)  # Full page, not the first embedded image.
     assert image.convert("RGB").getpixel((30, 250)) == (255, 0, 0)
     assert image.convert("RGB").getpixel((140, 80)) == (0, 0, 255)
-    assert command[0] == "C:/Local OCR/tesseract.exe"
-    assert command[command.index("-l") + 1] == "chi_sim+eng"
-    assert command[command.index("--tessdata-dir") + 1] == "C:/Local OCR/tessdata"
-    assert not Path(command[1]).exists()  # Temporary page images are removed.
+    assert not Path(image_path).exists()  # Temporary page images are removed.
 
 
 def test_force_ocr_covers_text_and_image_on_same_page(tmp_path, ocr_stub):
@@ -125,30 +117,40 @@ def test_short_text_page_is_ocr_candidate(tmp_path, ocr_stub):
     assert len(ocr_stub) == 1
 
 
-@pytest.mark.parametrize("failure, message", [
-    (FileNotFoundError(), "executable not found"),
-    (subprocess.TimeoutExpired("tesseract", 120), "timed out"),
-    (subprocess.CalledProcessError(1, "tesseract", stderr="bad language"), "exit code 1"),
-])
-def test_engine_errors_abort_document(tmp_path, monkeypatch, failure, message):
+def test_engine_errors_abort_document(tmp_path, monkeypatch):
     source = tmp_path / "scanned.pdf"
     make_pdf(source, [("", [(10, 20, (255, 0, 0))])])
 
     def fail(*args, **kwargs):
-        raise failure
+        raise RuntimeError("inference failed")
 
-    monkeypatch.setattr(subprocess, "run", fail)
-    with pytest.raises(PdfExtractionError, match=message):
+    monkeypatch.setattr(pdf_preprocessor, "_create_ocr_engine", lambda model_dir: fail)
+    with pytest.raises(PdfExtractionError, match="inference failed"):
         extract_pdf_text(source)
 
 
-def test_missing_chinese_language_is_not_silent_fallback(tmp_path, monkeypatch):
+def test_missing_model_is_not_silent_download_fallback(tmp_path, monkeypatch):
+    pytest.importorskip("rapidocr")
+    from rapidocr.utils.download_file import DownloadFile
     source = tmp_path / "scanned.pdf"
     make_pdf(source, [("", [(10, 20, (0, 0, 0))])])
-    monkeypatch.setattr(subprocess, "run", lambda command, **kw:
-                        subprocess.CompletedProcess(command, 0, "List:\neng\n", ""))
-    with pytest.raises(PdfExtractionError, match="Missing local Tesseract language data: chi_sim"):
-        extract_pdf_text(source)
+    monkeypatch.setattr(DownloadFile, "run", lambda *a: pytest.fail("No download fallback"))
+    with pytest.raises(PdfExtractionError, match="Missing local OCR model"):
+        extract_pdf_text(source, model_dir=tmp_path, dpi=72)
+
+
+def test_missing_embedded_dictionary_is_not_downloaded(tmp_path, monkeypatch):
+    pytest.importorskip("rapidocr")
+    import onnxruntime
+    import rapidocr
+    for name in ["PP-OCRv6_det_small.onnx", "PP-OCRv6_rec_small.onnx",
+                 "ch_ppocr_mobile_v2.0_cls_mobile.onnx"]:
+        (tmp_path / name).touch()
+    session = SimpleNamespace(get_modelmeta=lambda: SimpleNamespace(custom_metadata_map={}))
+    monkeypatch.setattr(onnxruntime, "InferenceSession", lambda *a, **kw: session)
+    monkeypatch.setattr(rapidocr, "RapidOCR", lambda *a, **kw: pytest.fail("Dictionary must be checked before initialization"))
+    with pytest.raises(PdfExtractionError, match="no embedded character dictionary"):
+        pdf_preprocessor._create_ocr_engine(tmp_path)
 
 
 def test_empty_ocr_aborts_instead_of_returning_partial_document(tmp_path, monkeypatch):
@@ -156,11 +158,8 @@ def test_empty_ocr_aborts_instead_of_returning_partial_document(tmp_path, monkey
     make_pdf(source, [("A good first page must not hide a failed second-page OCR.", []),
                       ("", [(10, 20, (0, 0, 0))])])
 
-    def run(command, **kwargs):
-        output = "chi_sim\neng" if "--list-langs" in command else " \n"
-        return subprocess.CompletedProcess(command, 0, output, "")
-
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(pdf_preprocessor, "_create_ocr_engine", lambda model_dir:
+                        lambda image_path: SimpleNamespace(txts=[]))
     with pytest.raises(PdfExtractionError, match="page 2: OCR returned no text"):
         extract_pdf_text(source, dpi=72)
 
@@ -169,7 +168,7 @@ def test_empty_ocr_aborts_instead_of_returning_partial_document(tmp_path, monkey
 def test_verified_white_page_is_marked_blank_without_ocr(tmp_path, monkeypatch, mode):
     source = tmp_path / "blank.pdf"
     make_pdf(source, [("", []), ("", [(10, 20, (255, 255, 255))])])
-    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: pytest.fail("Verified blank page needs no OCR"))
+    monkeypatch.setattr(pdf_preprocessor, "_create_ocr_engine", lambda *a: pytest.fail("Verified blank page needs no OCR"))
     result = extract_pdf_text(source, mode=mode, dpi=72)
     assert "Page: 1 | Method: blank" in result
     assert "Page: 2 | Method: blank" in result
@@ -179,11 +178,8 @@ def test_nearly_white_page_is_not_guessed_blank(tmp_path, monkeypatch):
     source = tmp_path / "faint.pdf"
     make_pdf(source, [("", [(10, 20, (254, 254, 254))])])
 
-    def run(command, **kwargs):
-        output = "chi_sim\neng" if "--list-langs" in command else ""
-        return subprocess.CompletedProcess(command, 0, output, "")
-
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(pdf_preprocessor, "_create_ocr_engine", lambda model_dir:
+                        lambda image_path: SimpleNamespace(txts=[]))
     with pytest.raises(PdfExtractionError, match="OCR returned no text"):
         extract_pdf_text(source, dpi=72)
 
@@ -206,8 +202,7 @@ def test_encrypted_pdf_reports_failure(tmp_path):
         extract_pdf_text(source)
 
 
-@pytest.mark.parametrize("options", [{"mode": "off"}, {"min_text_chars": 0}, {"dpi": 0},
-                                     {"timeout": 0}, {"languages": "chi_sim+"}])
+@pytest.mark.parametrize("options", [{"mode": "off"}, {"min_text_chars": 0}, {"dpi": 0}])
 def test_invalid_options_are_explicit(options):
     with pytest.raises(ValueError):
         extract_pdf_text("unused.pdf", **options)

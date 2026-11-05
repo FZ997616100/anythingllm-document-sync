@@ -12,12 +12,9 @@ file-excludes:
 
 # Optional PDF repair; 'off' preserves AnythingLLM's built-in PDF processing.
 # auto: OCR each page with insufficient text. force: OCR every complete page.
-# Requires requirements-pdf.txt plus a local Tesseract installation/language data.
+# requirements-pdf.txt includes RapidOCR and its bundled local Chinese/English models.
 pdf:
   mode: 'off'
-  languages: chi_sim+eng
   dpi: 300
   min_text_chars: 30
-  timeout: 120
-  tesseract_cmd: tesseract
-  # tessdata_dir: 'C:/Program Files/Tesseract-OCR/tessdata'
+  # model_dir: 'C:/LocalModels/RapidOCR'

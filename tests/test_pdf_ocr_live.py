@@ -1,26 +1,27 @@
 """Optional real offline OCR checks using synthetic content only.
 
-Run with requirements-pdf.txt plus local Tesseract chi_sim/eng data and a CJK
-font installed. No dependencies or language models are downloaded by tests.
-Optional environment variables: TESSERACT_CMD, TESSDATA_DIR,
+Run with requirements-pdf.txt and a local CJK font. RapidOCR's wheel includes
+the OCR models. No dependencies or models are downloaded by these tests.
+Optional environment variables:
 PDF_OCR_TEST_FONT (a Chinese-capable .ttf/.ttc/.otf file), and
 PDF_OCR_TEST_FONT_INDEX (the face index for a font collection).
-Missing local prerequisites skip these tests; an available engine failing OCR
-does not skip. Ubuntu CI can use tesseract-ocr, tesseract-ocr-chi-sim, and
-fonts-noto-cjk. This verifies clean scan recognition, not real-document accuracy.
+Missing Python dependencies or fonts skip these tests; missing/broken models
+and recognition failures do not skip. Ubuntu CI can use fonts-noto-cjk.
+This verifies clean scan recognition, not real-document accuracy.
 """
 
 import hashlib
 import os
 from pathlib import Path
-import shutil
-import subprocess
+import socket
 
 import pytest
 
 pytest.importorskip("pypdf")
 pytest.importorskip("pypdfium2")
 pytest.importorskip("PIL")
+pytest.importorskip("rapidocr")
+pytest.importorskip("onnxruntime")
 
 from PIL import Image, ImageDraw, ImageFont
 from pypdf import PdfWriter
@@ -28,21 +29,22 @@ from pypdf.generic import (DecodedStreamObject, DictionaryObject,
                            NameObject, NumberObject)
 
 from anythingllm_loader.pdf_preprocessor import extract_pdf_text
+from rapidocr.utils.download_file import DownloadFile
 
 
-@pytest.fixture(scope="module")
-def live_ocr():
-    executable = shutil.which(os.environ.get("TESSERACT_CMD", "tesseract"))
-    if not executable:
-        pytest.skip("Real local Tesseract executable is unavailable")
-    tessdata_dir = os.environ.get("TESSDATA_DIR")
-    command = [executable, "--list-langs"]
-    if tessdata_dir:
-        command.extend(["--tessdata-dir", tessdata_dir])
-    result = subprocess.run(command, check=True, capture_output=True, text=True,
-                            encoding="utf-8", timeout=30)
-    if not {"chi_sim", "eng"}.issubset(result.stdout.splitlines()):
-        pytest.skip("Real OCR needs both local chi_sim and eng language data")
+@pytest.fixture
+def live_ocr(monkeypatch):
+    attempts = []
+
+    def reject_network(*args, **kwargs):
+        attempts.append(args)
+        pytest.fail("Local OCR attempted a network connection or model download")
+
+    monkeypatch.setattr(socket.socket, "connect", reject_network)
+    monkeypatch.setattr(socket.socket, "connect_ex", reject_network)
+    monkeypatch.setattr(socket, "create_connection", reject_network)
+    monkeypatch.setattr("requests.sessions.Session.request", reject_network)
+    monkeypatch.setattr(DownloadFile, "run", reject_network)
     candidates = [os.environ.get("PDF_OCR_TEST_FONT"),
                   "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
                   "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
@@ -58,7 +60,8 @@ def live_ocr():
         assert ImageFont.truetype(font_path, 104, index=font_index).getname()[0].endswith("CJK SC"), (
             "Synthetic Chinese scans require the Simplified Chinese Noto face"
         )
-    return {"tesseract_cmd": executable, "tessdata_dir": tessdata_dir}, font_path, font_index
+    yield {}, font_path, font_index
+    assert not attempts
 
 
 def add_page(writer, images=(), text=""):

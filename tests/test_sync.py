@@ -243,11 +243,9 @@ def test_migration_preserves_legacy_rows_and_adds_columns(tmp_path):
 @pytest.mark.parametrize("initial, changed", [
     ({"mode": "off"}, {"mode": "auto"}),
     ({"mode": "auto"}, {"mode": "force"}),
-    ({"mode": "auto"}, {"mode": "auto", "languages": "eng"}),
     ({"mode": "auto"}, {"mode": "auto", "dpi": 200}),
     ({"mode": "auto"}, {"mode": "auto", "min_text_chars": 50}),
-    ({"mode": "auto"}, {"mode": "auto", "tesseract_cmd": "other-local-tesseract"}),
-    ({"mode": "auto"}, {"mode": "auto", "tessdata_dir": "other-local-data"}),
+    ({"mode": "auto"}, {"mode": "auto", "model_dir": "other-local-models"}),
 ])
 def test_pdf_processing_settings_trigger_reupload_and_preserve_old_on_failure(setup, initial, changed):
     root, config, db, api = setup
@@ -275,7 +273,7 @@ def test_pdf_explicit_default_options_keep_same_effective_fingerprint(setup):
     (root / "file.pdf").write_bytes(b"synthetic pdf")
     config.pdf = {"mode": "auto"}
     assert sync_once(config, db, api)
-    config.pdf = {"mode": "auto", "languages": "chi_sim+eng", "dpi": 300}
+    config.pdf = {"mode": "auto", "model_dir": None, "dpi": 300}
     assert sync_once(config, db, api)
     assert api.serial == 1
 

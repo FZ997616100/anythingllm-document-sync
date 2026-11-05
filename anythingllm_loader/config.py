@@ -49,11 +49,18 @@ class AnythingLLMConfig:
         if not parsed or parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("anythingllm-url must be an HTTP(S) URL without credentials")
         pdf = config.get("pdf", {})
-        allowed = {"mode", "min_text_chars", "dpi", "tesseract_cmd", "languages", "tessdata_dir", "timeout"}
+        allowed = {"mode", "min_text_chars", "dpi", "model_dir"}
         if not isinstance(pdf, dict) or set(pdf) - allowed:
             raise ValueError("pdf must be a mapping containing only documented PDF options")
         if pdf.get("mode", "off") not in ("off", "auto", "force"):
             raise ValueError("pdf.mode must be off, auto or force (quote 'off' in YAML)")
+        if pdf.get("model_dir") is not None:
+            if not isinstance(pdf["model_dir"], str) or not pdf["model_dir"].strip():
+                raise ValueError("pdf.model_dir must be a directory path or null")
+            models = pathlib.Path(pdf["model_dir"]).expanduser()
+            if not models.is_absolute():
+                models = config_path.resolve().parent / models
+            pdf["model_dir"] = str(models.absolute())
         file_paths = []
         for value in config["file-paths"]:
             source = pathlib.Path(value).expanduser()
