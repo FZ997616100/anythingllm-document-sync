@@ -39,6 +39,9 @@
 安装可选 requirements-pdf.txt 后，OCR 还需要本地 Tesseract 及 chi_sim、eng 语言包；
 本工具不会自动下载或安装它们。配置中的 tesseract_cmd 指向引擎，
 tessdata_dir 可指定本地语言包目录。
+中文资料建议使用官方 [tessdata_best](https://github.com/tesseract-ocr/tessdata_best) 中的 chi_sim、eng
+高精度模型，下载到本地后用 tessdata_dir 指定目录。系统自带的快速模型在干净测试页中也曾识别错字。
+CI 使用固定版本的官方高精度模型，实际资料仍需抽样核验文字准确性。
 
 | 模式 | 行为 |
 | --- | --- |

@@ -58,6 +58,9 @@ implemented by this tool.
 PDF preprocessing is opt-in. Install `requirements-pdf.txt`; OCR additionally
 needs a local Tesseract executable and `chi_sim+eng` language data.
 Python packages do not install the engine or download languages automatically.
+For Chinese documents, prefer the official [tessdata_best](https://github.com/tesseract-ocr/tessdata_best)
+models and set `pdf.tessdata_dir` to their local directory. CI uses this higher-accuracy
+configuration; distribution-provided fast models can misrecognize even clean scans.
 
 - `pdf.mode: 'off'`: AnythingLLM's built-in PDF processing.
 - `pdf.mode: auto`: retain sufficient page text; OCR each low-text page.

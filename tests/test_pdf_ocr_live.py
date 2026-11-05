@@ -3,7 +3,8 @@
 Run with requirements-pdf.txt plus local Tesseract chi_sim/eng data and a CJK
 font installed. No dependencies or language models are downloaded by tests.
 Optional environment variables: TESSERACT_CMD, TESSDATA_DIR,
-PDF_OCR_TEST_FONT (a Chinese-capable .ttf/.ttc/.otf file).
+PDF_OCR_TEST_FONT (a Chinese-capable .ttf/.ttc/.otf file), and
+PDF_OCR_TEST_FONT_INDEX (the face index for a font collection).
 Missing local prerequisites skip these tests; an available engine failing OCR
 does not skip. Ubuntu CI can use tesseract-ocr, tesseract-ocr-chi-sim, and
 fonts-noto-cjk. This verifies clean scan recognition, not real-document accuracy.
@@ -50,7 +51,14 @@ def live_ocr():
     font_path = next((path for path in candidates if path and Path(path).is_file()), None)
     if not font_path:
         pytest.skip("A local Chinese-capable font is required for synthetic scan fixtures")
-    return {"tesseract_cmd": executable, "tessdata_dir": tessdata_dir}, font_path
+    noto_collection = Path(font_path).name in {"NotoSansCJK-Regular.ttc", "NotoSerifCJK-Regular.ttc"}
+    # Noto's TTC face 0 is Japanese; face 2 supplies Simplified Chinese forms.
+    font_index = int(os.environ.get("PDF_OCR_TEST_FONT_INDEX", "2" if noto_collection else "0"))
+    if noto_collection:
+        assert ImageFont.truetype(font_path, 104, index=font_index).getname()[0].endswith("CJK SC"), (
+            "Synthetic Chinese scans require the Simplified Chinese Noto face"
+        )
+    return {"tesseract_cmd": executable, "tessdata_dir": tessdata_dir}, font_path, font_index
 
 
 def add_page(writer, images=(), text=""):
@@ -86,14 +94,14 @@ def add_page(writer, images=(), text=""):
 
 @pytest.mark.parametrize("mode", ["auto", "force"])
 def test_live_chinese_english_and_multiple_images(tmp_path, live_ocr, mode):
-    options, font_path = live_ocr
+    options, font_path, font_index = live_ocr
     source = tmp_path / "synthetic_local_ocr.pdf"
     writer = PdfWriter()
     add_page(writer, text="LOCAL DIGITAL DOCUMENT TEXT FOR THE FIRST PAGE")
 
     chinese = Image.new("RGB", (2000, 2600), "white")
     draw = ImageDraw.Draw(chinese)
-    chinese_font = ImageFont.truetype(font_path, 104)
+    chinese_font = ImageFont.truetype(font_path, 104, index=font_index)
     draw.text((150, 300), "安全学习", font=chinese_font, fill="black")
     draw.text((150, 550), "列车运行", font=chinese_font, fill="black")
     add_page(writer, [(chinese, 60, 80, 480, 624)])
@@ -101,7 +109,7 @@ def test_live_chinese_english_and_multiple_images(tmp_path, live_ocr, mode):
 
     upper = Image.new("RGB", (1900, 360), "white")
     lower = Image.new("RGB", (1900, 360), "white")
-    english_font = ImageFont.truetype(font_path, 86)
+    english_font = ImageFont.truetype(font_path, 86, index=font_index)
     ImageDraw.Draw(upper).text((80, 100), "UPPER PANEL ALPHA", font=english_font, fill="black")
     ImageDraw.Draw(lower).text((80, 100), "LOWER PANEL BRAVO", font=english_font, fill="black")
     add_page(writer, [(upper, 72, 570, 456, 86.4), (lower, 72, 180, 456, 86.4)])

@@ -5,6 +5,7 @@ on: [push, pull_request]
 jobs:
   test:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -28,6 +29,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y tesseract-ocr tesseract-ocr-chi-sim fonts-noto-cjk
+
+      - name: Fetch official high-accuracy OCR models (synthetic tests only)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p "$RUNNER_TEMP/tessdata-best"
+          curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/e12c65a915945e4c28e237a9b52bc4a8f39a0cec/chi_sim.traineddata -o "$RUNNER_TEMP/tessdata-best/chi_sim.traineddata"
+          curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/e12c65a915945e4c28e237a9b52bc4a8f39a0cec/eng.traineddata -o "$RUNNER_TEMP/tessdata-best/eng.traineddata"
+          echo "TESSDATA_DIR=$RUNNER_TEMP/tessdata-best" >> "$GITHUB_ENV"
 
       - name: Run tests (live AnythingLLM is opt-in)
         run: python -m pytest tests -v -ra
